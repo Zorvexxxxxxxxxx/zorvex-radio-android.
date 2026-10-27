@@ -11,25 +11,44 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Download repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Configure Android SDK
-        uses: android-actions/setup-android@v3
+        shell: bash
+        run: |
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
+
+          if [ ! -d "$SDK" ]; then
+            echo "Android SDK directory not found: $SDK"
+            exit 1
+          fi
+
+          find "$SDK" -name sdkmanager -type f
 
       - name: Install Android components
+        shell: bash
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          SDKMANAGER=$(find "$ANDROID_HOME" -name sdkmanager -type f | head -n 1)
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager not found"
+            exit 1
+          fi
+
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
+            "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Create Android application
         shell: bash
@@ -75,8 +94,8 @@ jobs:
                   applicationId 'com.zorvex.radio'
                   minSdk 23
                   targetSdk 35
-                  versionCode 2
-                  versionName '2.0'
+                  versionCode 3
+                  versionName '3.0'
               }
           }
 
@@ -140,7 +159,6 @@ jobs:
           import androidx.annotation.Nullable;
           import androidx.media3.common.MediaItem;
           import androidx.media3.common.MediaMetadata;
-          import androidx.media3.common.Player;
           import androidx.media3.exoplayer.ExoPlayer;
           import androidx.media3.session.MediaSession;
           import androidx.media3.session.MediaSessionService;
@@ -158,28 +176,23 @@ jobs:
 
               @Nullable
               @Override
-              public MediaSession onGetSession(
-                      MediaSession.ControllerInfo controllerInfo) {
+              public MediaSession onGetSession(MediaSession.ControllerInfo info) {
                   return session;
               }
 
               @Override
-              public int onStartCommand(
-                      Intent intent, int flags, int startId) {
+              public int onStartCommand(Intent intent, int flags, int startId) {
                   int result = super.onStartCommand(intent, flags, startId);
 
-                  if (intent != null &&
-                      "PLAY_RADIO".equals(intent.getAction())) {
+                  if (intent != null && "PLAY_RADIO".equals(intent.getAction())) {
                       String url = intent.getStringExtra("url");
                       String title = intent.getStringExtra("title");
 
                       if (url != null && !url.trim().isEmpty()) {
-                          MediaMetadata metadata =
-                              new MediaMetadata.Builder()
-                                  .setTitle(title == null
-                                      ? "Zorvex Radio" : title)
-                                  .setArtist("Zorvex Radio")
-                                  .build();
+                          MediaMetadata metadata = new MediaMetadata.Builder()
+                              .setTitle(title == null ? "Zorvex Radio" : title)
+                              .setArtist("Zorvex Radio")
+                              .build();
 
                           MediaItem item = new MediaItem.Builder()
                               .setUri(Uri.parse(url))
@@ -200,14 +213,8 @@ jobs:
 
               @Override
               public void onDestroy() {
-                  if (session != null) {
-                      session.release();
-                      session = null;
-                  }
-                  if (player != null) {
-                      player.release();
-                      player = null;
-                  }
+                  if (session != null) session.release();
+                  if (player != null) player.release();
                   super.onDestroy();
               }
           }
@@ -234,29 +241,16 @@ jobs:
               private WebView webView;
               private final Handler handler = new Handler(Looper.getMainLooper());
 
-              private final Runnable injectTask = new Runnable() {
-                  @Override
-                  public void run() {
-                      if (webView != null) {
-                          injectBridge();
-                          handler.postDelayed(this, 1000);
-                      }
-                  }
-              };
-
               public class RadioBridge {
                   @JavascriptInterface
                   public void playRadio(String url, String title) {
-                      if (url == null || url.isEmpty()) return;
+                      if (url == null || url.trim().isEmpty()) return;
 
                       runOnUiThread(() -> {
-                          Intent intent = new Intent(
-                              MainActivity.this, RadioService.class);
+                          Intent intent = new Intent(MainActivity.this, RadioService.class);
                           intent.setAction("PLAY_RADIO");
                           intent.putExtra("url", url);
-                          intent.putExtra("title",
-                              title == null ? "Zorvex Radio" : title);
-
+                          intent.putExtra("title", title);
                           if (Build.VERSION.SDK_INT >= 26) {
                               startForegroundService(intent);
                           } else {
@@ -267,12 +261,9 @@ jobs:
 
                   @JavascriptInterface
                   public void pauseRadio() {
-                      runOnUiThread(() -> {
-                          Intent intent = new Intent(
-                              MainActivity.this, RadioService.class);
-                          intent.setAction("PAUSE_RADIO");
-                          startService(intent);
-                      });
+                      Intent intent = new Intent(MainActivity.this, RadioService.class);
+                      intent.setAction("PAUSE_RADIO");
+                      startService(intent);
                   }
               }
 
@@ -304,54 +295,32 @@ jobs:
                       }
                   });
 
-                  webView.loadUrl(
-                      "https://musikzorvexxxxxxxxxxteam.netlify.app");
-                  handler.postDelayed(injectTask, 1000);
+                  webView.loadUrl("https://musikzorvexxxxxxxxxxteam.netlify.app");
               }
 
               private void injectBridge() {
-                  String script =
+                  String js =
                       "(function(){" +
-                      "if(window.__zrvBridgeInstalled)return;" +
-                      "window.__zrvBridgeInstalled=true;" +
-                      "var originalPlay=HTMLMediaElement.prototype.play;" +
-                      "var originalPause=HTMLMediaElement.prototype.pause;" +
+                      "if(window.__zrvInstalled)return;window.__zrvInstalled=true;" +
+                      "var p=HTMLMediaElement.prototype.play;" +
                       "HTMLMediaElement.prototype.play=function(){" +
                       "if(this.tagName==='AUDIO'&&window.AndroidRadio){" +
                       "var u=this.currentSrc||this.src;" +
-                      "if(u){" +
-                      "window.AndroidRadio.playRadio(u," +
-                      "document.title||'Zorvex Radio');" +
-                      "this.dispatchEvent(new Event('play'));" +
-                      "return Promise.resolve();" +
-                      "}}" +
-                      "return originalPlay.apply(this,arguments);" +
-                      "};" +
-                      "HTMLMediaElement.prototype.pause=function(){" +
-                      "if(this.tagName==='AUDIO'&&window.AndroidRadio){" +
-                      "window.AndroidRadio.pauseRadio();" +
-                      "this.dispatchEvent(new Event('pause'));" +
-                      "return;" +
-                      "}" +
-                      "return originalPause.apply(this,arguments);" +
-                      "};" +
+                      "if(u){window.AndroidRadio.playRadio(u,document.title||'Zorvex Radio');" +
+                      "return Promise.resolve();}}" +
+                      "return p.apply(this,arguments);};" +
                       "})();";
-
-                  webView.evaluateJavascript(script, null);
+                  webView.evaluateJavascript(js, null);
               }
 
               @Override
               public void onBackPressed() {
-                  if (webView != null && webView.canGoBack()) {
-                      webView.goBack();
-                  } else {
-                      super.onBackPressed();
-                  }
+                  if (webView != null && webView.canGoBack()) webView.goBack();
+                  else super.onBackPressed();
               }
 
               @Override
               protected void onDestroy() {
-                  handler.removeCallbacks(injectTask);
                   if (webView != null) {
                       webView.removeJavascriptInterface("AndroidRadio");
                       webView.destroy();
@@ -361,6 +330,22 @@ jobs:
               }
           }
           EOF
+
+      - name: Download Gradle
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          unzip -q gradle-8.7-bin.zip
+          echo "$PWD/gradle-8.7/bin" >> "$GITHUB_PATH"
+
+      - name: Build APK
+        run: gradle --no-daemon assembleDebug
+
+      - name: Save APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zorvex-Radio-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+EOF
 
       - name: Download Gradle
         run: |
