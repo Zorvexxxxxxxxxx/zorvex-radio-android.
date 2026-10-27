@@ -25,21 +25,23 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
-        with:
-          packages: ''
 
       - name: Install Android packages
         run: |
-          sdkmanager --install \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
+          sdkmanager --licenses || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Create project
         shell: bash
         run: |
           mkdir -p app/src/main/java/com/zorvex/radio
           mkdir -p app/src/main/res/values
+
+          cat > gradle.properties <<'EOF'
+          android.useAndroidX=true
+          android.enableJetifier=true
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          EOF
 
           cat > settings.gradle <<'EOF'
           pluginManagement {
@@ -79,8 +81,8 @@ jobs:
                   applicationId 'com.zorvex.radio'
                   minSdk 23
                   targetSdk 35
-                  versionCode 4
-                  versionName '4.0'
+                  versionCode 5
+                  versionName '5.0'
               }
           }
 
@@ -186,9 +188,7 @@ jobs:
                           player.prepare();
                           player.play();
                       }
-                  }
-
-                  if (intent != null &&
+                  } else if (intent != null &&
                       "PAUSE_RADIO".equals(intent.getAction())) {
                       player.pause();
                   }
