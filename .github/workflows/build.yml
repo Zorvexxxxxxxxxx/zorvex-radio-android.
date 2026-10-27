@@ -1,10 +1,10 @@
-
 name: Build Zorvex Radio APK
 
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -14,43 +14,28 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Download repository
+      - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install Java
+      - name: Setup Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Configure Android SDK
-        shell: bash
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ''
+
+      - name: Install Android packages
         run: |
-          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
-          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
-          if [ ! -d "$SDK" ]; then
-            echo "Android SDK directory not found: $SDK"
-            exit 1
-          fi
-
-          find "$SDK" -name sdkmanager -type f
-
-      - name: Install Android components
-        shell: bash
-        run: |
-          SDKMANAGER=$(find "$ANDROID_HOME" -name sdkmanager -type f | head -n 1)
-          if [ -z "$SDKMANAGER" ]; then
-            echo "sdkmanager not found"
-            exit 1
-          fi
-
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses || true
-          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
-            "platform-tools" "platforms;android-35" "build-tools;35.0.0"
-
-      - name: Create Android application
+      - name: Create project
         shell: bash
         run: |
           mkdir -p app/src/main/java/com/zorvex/radio
@@ -71,8 +56,8 @@ jobs:
                   mavenCentral()
               }
           }
-          rootProject.name = "ZorvexRadio"
-          include(":app")
+          rootProject.name = 'ZorvexRadio'
+          include ':app'
           EOF
 
           cat > build.gradle <<'EOF'
@@ -94,8 +79,8 @@ jobs:
                   applicationId 'com.zorvex.radio'
                   minSdk 23
                   targetSdk 35
-                  versionCode 3
-                  versionName '3.0'
+                  versionCode 4
+                  versionName '4.0'
               }
           }
 
@@ -113,10 +98,9 @@ jobs:
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
               <application
-                  android:theme="@style/AppTheme"
                   android:label="Zorvex Radio"
-                  android:usesCleartextTraffic="true"
-                  android:allowBackup="false">
+                  android:theme="@style/AppTheme"
+                  android:usesCleartextTraffic="true">
 
                   <activity
                       android:name=".MainActivity"
@@ -142,11 +126,9 @@ jobs:
           cat > app/src/main/res/values/styles.xml <<'EOF'
           <resources>
               <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
-                  <item name="android:fontFamily">sans</item>
                   <item name="android:colorAccent">#8B5CF6</item>
                   <item name="android:statusBarColor">#101018</item>
                   <item name="android:navigationBarColor">#101018</item>
-                  <item name="android:windowLightStatusBar">false</item>
               </style>
           </resources>
           EOF
@@ -184,7 +166,8 @@ jobs:
               public int onStartCommand(Intent intent, int flags, int startId) {
                   int result = super.onStartCommand(intent, flags, startId);
 
-                  if (intent != null && "PLAY_RADIO".equals(intent.getAction())) {
+                  if (intent != null &&
+                      "PLAY_RADIO".equals(intent.getAction())) {
                       String url = intent.getStringExtra("url");
                       String title = intent.getStringExtra("title");
 
@@ -203,7 +186,9 @@ jobs:
                           player.prepare();
                           player.play();
                       }
-                  } else if (intent != null &&
+                  }
+
+                  if (intent != null &&
                       "PAUSE_RADIO".equals(intent.getAction())) {
                       player.pause();
                   }
@@ -229,8 +214,6 @@ jobs:
           import android.content.pm.PackageManager;
           import android.os.Build;
           import android.os.Bundle;
-          import android.os.Handler;
-          import android.os.Looper;
           import android.webkit.JavascriptInterface;
           import android.webkit.WebChromeClient;
           import android.webkit.WebSettings;
@@ -239,7 +222,6 @@ jobs:
 
           public class MainActivity extends Activity {
               private WebView webView;
-              private final Handler handler = new Handler(Looper.getMainLooper());
 
               public class RadioBridge {
                   @JavascriptInterface
@@ -247,10 +229,12 @@ jobs:
                       if (url == null || url.trim().isEmpty()) return;
 
                       runOnUiThread(() -> {
-                          Intent intent = new Intent(MainActivity.this, RadioService.class);
+                          Intent intent = new Intent(
+                              MainActivity.this, RadioService.class);
                           intent.setAction("PLAY_RADIO");
                           intent.putExtra("url", url);
                           intent.putExtra("title", title);
+
                           if (Build.VERSION.SDK_INT >= 26) {
                               startForegroundService(intent);
                           } else {
@@ -261,7 +245,8 @@ jobs:
 
                   @JavascriptInterface
                   public void pauseRadio() {
-                      Intent intent = new Intent(MainActivity.this, RadioService.class);
+                      Intent intent = new Intent(
+                          MainActivity.this, RadioService.class);
                       intent.setAction("PAUSE_RADIO");
                       startService(intent);
                   }
@@ -288,35 +273,19 @@ jobs:
 
                   webView.addJavascriptInterface(new RadioBridge(), "AndroidRadio");
                   webView.setWebChromeClient(new WebChromeClient());
-                  webView.setWebViewClient(new WebViewClient() {
-                      @Override
-                      public void onPageFinished(WebView view, String url) {
-                          injectBridge();
-                      }
-                  });
+                  webView.setWebViewClient(new WebViewClient());
 
-                  webView.loadUrl("https://musikzorvexxxxxxxxxxteam.netlify.app");
-              }
-
-              private void injectBridge() {
-                  String js =
-                      "(function(){" +
-                      "if(window.__zrvInstalled)return;window.__zrvInstalled=true;" +
-                      "var p=HTMLMediaElement.prototype.play;" +
-                      "HTMLMediaElement.prototype.play=function(){" +
-                      "if(this.tagName==='AUDIO'&&window.AndroidRadio){" +
-                      "var u=this.currentSrc||this.src;" +
-                      "if(u){window.AndroidRadio.playRadio(u,document.title||'Zorvex Radio');" +
-                      "return Promise.resolve();}}" +
-                      "return p.apply(this,arguments);};" +
-                      "})();";
-                  webView.evaluateJavascript(js, null);
+                  webView.loadUrl(
+                      "https://musikzorvexxxxxxxxxxteam.netlify.app");
               }
 
               @Override
               public void onBackPressed() {
-                  if (webView != null && webView.canGoBack()) webView.goBack();
-                  else super.onBackPressed();
+                  if (webView != null && webView.canGoBack()) {
+                      webView.goBack();
+                  } else {
+                      super.onBackPressed();
+                  }
               }
 
               @Override
@@ -340,23 +309,7 @@ jobs:
       - name: Build APK
         run: gradle --no-daemon assembleDebug
 
-      - name: Save APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Zorvex-Radio-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
-EOF
-
-      - name: Download Gradle
-        run: |
-          wget -q https://services.gradle.org/distributions/gradle-8.7-bin.zip
-          unzip -q gradle-8.7-bin.zip
-          echo "$PWD/gradle-8.7/bin" >> "$GITHUB_PATH"
-
-      - name: Build APK
-        run: gradle --no-daemon assembleDebug
-
-      - name: Save APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Zorvex-Radio-APK
