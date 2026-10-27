@@ -1,3 +1,4 @@
+
 name: Build Zorvex Radio APK
 
 on:
@@ -81,12 +82,13 @@ jobs:
                   applicationId 'com.zorvex.radio'
                   minSdk 23
                   targetSdk 35
-                  versionCode 5
-                  versionName '5.0'
+                  versionCode 6
+                  versionName '6.0'
               }
           }
 
           dependencies {
+              implementation 'androidx.annotation:annotation:1.8.2'
               implementation 'androidx.media3:media3-exoplayer:1.5.1'
               implementation 'androidx.media3:media3-session:1.5.1'
           }
@@ -299,6 +301,22 @@ jobs:
               }
           }
           EOF
+
+      - name: Download Gradle
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          unzip -q gradle-8.7-bin.zip
+          echo "$PWD/gradle-8.7/bin" >> "$GITHUB_PATH"
+
+      - name: Build APK
+        run: gradle --no-daemon assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zorvex-Radio-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+EOF
 
       - name: Download Gradle
         run: |
