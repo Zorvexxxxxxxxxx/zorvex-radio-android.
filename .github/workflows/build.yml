@@ -18,7 +18,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -77,7 +77,6 @@ jobs:
           android.useAndroidX=true
           android.enableJetifier=true
           org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
-          org.gradle.parallel=true
           EOF
 
           cat > app/build.gradle <<'EOF'
@@ -93,8 +92,8 @@ jobs:
                   applicationId 'com.zorvex.radio'
                   minSdk 23
                   targetSdk 35
-                  versionCode 8
-                  versionName '8.0'
+                  versionCode 9
+                  versionName '9.0'
               }
 
               compileOptions {
@@ -106,13 +105,13 @@ jobs:
           dependencies {
               implementation 'androidx.annotation:annotation:1.8.2'
               implementation 'androidx.media3:media3-exoplayer:1.5.1'
+              implementation 'androidx.media3:media3-exoplayer-hls:1.5.1'
               implementation 'androidx.media3:media3-session:1.5.1'
           }
           EOF
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
@@ -126,8 +125,7 @@ jobs:
 
                   <activity
                       android:name=".MainActivity"
-                      android:exported="true"
-                      android:configChanges="orientation|screenSize|keyboardHidden">
+                      android:exported="true">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LAUNCHER" />
@@ -142,7 +140,6 @@ jobs:
                           <action android:name="androidx.media3.session.MediaSessionService" />
                       </intent-filter>
                   </service>
-
               </application>
           </manifest>
           EOF
@@ -168,15 +165,15 @@ jobs:
 
           import androidx.media3.common.MediaItem;
           import androidx.media3.common.MediaMetadata;
+          import androidx.media3.common.PlaybackException;
+          import androidx.media3.common.Player;
           import androidx.media3.exoplayer.ExoPlayer;
           import androidx.media3.session.MediaSession;
           import androidx.media3.session.MediaSessionService;
 
           public class RadioService extends MediaSessionService {
-              public static final String ACTION_PLAY =
-                      "com.zorvex.radio.PLAY";
-              public static final String ACTION_PAUSE =
-                      "com.zorvex.radio.PAUSE";
+              public static final String ACTION_PLAY = "com.zorvex.radio.PLAY";
+              public static final String ACTION_PAUSE = "com.zorvex.radio.PAUSE";
               public static final String EXTRA_URL = "stream_url";
               public static final String EXTRA_TITLE = "stream_title";
 
@@ -186,14 +183,24 @@ jobs:
               @Override
               public void onCreate() {
                   super.onCreate();
+
                   player = new ExoPlayer.Builder(this).build();
-                  mediaSession =
-                          new MediaSession.Builder(this, player).build();
+                  player.addListener(new Player.Listener() {
+                      @Override
+                      public void onPlayerError(PlaybackException error) {
+                          android.util.Log.e(
+                              "ZorvexRadio",
+                              "Playback failed: " + error.getErrorCodeName(),
+                              error
+                          );
+                      }
+                  });
+
+                  mediaSession = new MediaSession.Builder(this, player).build();
               }
 
               @Override
-              public int onStartCommand(
-                      Intent intent, int flags, int startId) {
+              public int onStartCommand(Intent intent, int flags, int startId) {
                   int result = super.onStartCommand(intent, flags, startId);
 
                   if (intent == null || player == null) {
@@ -214,22 +221,21 @@ jobs:
                       String scheme = uri.getScheme();
 
                       if (!uri.isAbsolute()
-                              || !("https".equalsIgnoreCase(scheme)
-                              || "http".equalsIgnoreCase(scheme))) {
+                          || !("https".equalsIgnoreCase(scheme)
+                          || "http".equalsIgnoreCase(scheme))) {
                           return result;
                       }
 
-                      MediaMetadata metadata =
-                              new MediaMetadata.Builder()
-                                      .setTitle(TextUtils.isEmpty(title)
-                                              ? "Zorvex Radio" : title)
-                                      .setArtist("Zorvex Radio")
-                                      .build();
+                      MediaMetadata metadata = new MediaMetadata.Builder()
+                          .setTitle(TextUtils.isEmpty(title)
+                              ? "Zorvex Radio" : title)
+                          .setArtist("Zorvex Radio")
+                          .build();
 
                       MediaItem item = new MediaItem.Builder()
-                              .setUri(uri)
-                              .setMediaMetadata(metadata)
-                              .build();
+                          .setUri(uri)
+                          .setMediaMetadata(metadata)
+                          .build();
 
                       player.setMediaItem(item);
                       player.prepare();
@@ -244,7 +250,7 @@ jobs:
 
               @Override
               public MediaSession onGetSession(
-                      MediaSession.ControllerInfo controllerInfo) {
+                  MediaSession.ControllerInfo controllerInfo) {
                   return mediaSession;
               }
 
@@ -281,7 +287,7 @@ jobs:
 
           public class MainActivity extends Activity {
               private static final String WEBSITE =
-                      "https://musikzorvexxxxxxxxxxteam.netlify.app";
+                  "https://musikzorvexxxxxxxxxxteam.netlify.app";
 
               private WebView webView;
 
@@ -292,27 +298,26 @@ jobs:
                   webView = new WebView(this);
                   webView.getSettings().setJavaScriptEnabled(true);
                   webView.getSettings().setDomStorageEnabled(true);
-                  webView.getSettings()
-                          .setMediaPlaybackRequiresUserGesture(false);
                   webView.setWebChromeClient(new WebChromeClient());
+
                   webView.addJavascriptInterface(
-                          new RadioBridge(), "AndroidRadio");
+                      new RadioBridge(), "AndroidRadio");
 
                   webView.setWebViewClient(new WebViewClient() {
                       @Override
                       public boolean shouldOverrideUrlLoading(
-                              WebView view, WebResourceRequest request) {
+                          WebView view, WebResourceRequest request) {
                           Uri uri = request.getUrl();
                           String scheme = uri.getScheme();
 
                           return !("https".equalsIgnoreCase(scheme)
-                                  || "http".equalsIgnoreCase(scheme));
+                              || "http".equalsIgnoreCase(scheme));
                       }
 
                       @Override
                       public void onPageFinished(WebView view, String url) {
                           super.onPageFinished(view, url);
-                          injectAudioBridge(view);
+                          injectBridge(view);
                       }
                   });
 
@@ -325,28 +330,23 @@ jobs:
                   }
               }
 
-              private void injectAudioBridge(WebView view) {
+              private void injectBridge(WebView view) {
                   String script =
-                          "(function() {" +
-                          "function hookAudio() {" +
-                          "document.querySelectorAll('audio,video').forEach(function(el) {" +
-                          "if (el.dataset.zorvexHooked) return;" +
-                          "el.dataset.zorvexHooked = '1';" +
-                          "el.addEventListener('play', function() {" +
-                          "var url = el.currentSrc || el.src;" +
-                          "if (url && (url.indexOf('https://') === 0 || " +
-                          "url.indexOf('http://') === 0) && window.AndroidRadio) {" +
-                          "el.pause();" +
-                          "window.AndroidRadio.playRadio(url, " +
-                          "document.title || 'Zorvex Radio');" +
-                          "}" +
-                          "});" +
-                          "});" +
-                          "}" +
-                          "hookAudio();" +
-                          "new MutationObserver(hookAudio).observe(" +
-                          "document.documentElement,{childList:true,subtree:true});" +
-                          "})();";
+                      "(function() {" +
+                      "if (window.__zorvexBridgeInstalled) return;" +
+                      "window.__zorvexBridgeInstalled = true;" +
+                      "document.addEventListener('play', function(event) {" +
+                      "var el = event.target;" +
+                      "if (!el || !el.matches || " +
+                      "!el.matches('audio,video')) return;" +
+                      "var url = el.currentSrc || el.src;" +
+                      "if (!url || !window.AndroidRadio) return;" +
+                      "if (url.indexOf('https://') !== 0 && " +
+                      "url.indexOf('http://') !== 0) return;" +
+                      "window.AndroidRadio.playRadio(url, " +
+                      "document.title || 'Zorvex Radio');" +
+                      "}, true);" +
+                      "})();";
 
                   view.evaluateJavascript(script, null);
               }
@@ -354,26 +354,24 @@ jobs:
               private class RadioBridge {
                   @JavascriptInterface
                   public void playRadio(String url, String title) {
-                      if (url == null) {
-                          return;
-                      }
+                      if (url == null) return;
 
                       Uri uri = Uri.parse(url);
                       String scheme = uri.getScheme();
 
                       if (!uri.isAbsolute()
-                              || !("https".equalsIgnoreCase(scheme)
-                              || "http".equalsIgnoreCase(scheme))) {
+                          || !("https".equalsIgnoreCase(scheme)
+                          || "http".equalsIgnoreCase(scheme))) {
                           return;
                       }
 
-                      Intent intent =
-                              new Intent(MainActivity.this, RadioService.class);
+                      Intent intent = new Intent(
+                          MainActivity.this, RadioService.class);
                       intent.setAction(RadioService.ACTION_PLAY);
                       intent.putExtra(RadioService.EXTRA_URL, url);
                       intent.putExtra(
-                              RadioService.EXTRA_TITLE,
-                              title == null ? "Zorvex Radio" : title);
+                          RadioService.EXTRA_TITLE,
+                          title == null ? "Zorvex Radio" : title);
 
                       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                           startForegroundService(intent);
@@ -384,8 +382,8 @@ jobs:
 
                   @JavascriptInterface
                   public void pauseRadio() {
-                      Intent intent =
-                              new Intent(MainActivity.this, RadioService.class);
+                      Intent intent = new Intent(
+                          MainActivity.this, RadioService.class);
                       intent.setAction(RadioService.ACTION_PAUSE);
                       startService(intent);
                   }
@@ -394,9 +392,7 @@ jobs:
               @Override
               protected void onSaveInstanceState(Bundle outState) {
                   super.onSaveInstanceState(outState);
-                  if (webView != null) {
-                      webView.saveState(outState);
-                  }
+                  if (webView != null) webView.saveState(outState);
               }
 
               @Override
